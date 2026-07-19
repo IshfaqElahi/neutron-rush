@@ -1,40 +1,31 @@
 'use client';
-import React, { useState, useEffect, useCallback } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { NeutronBackground } from '../../components/NeutronBackground';
 import { useQuizSecurity } from '../../components/useQuizSecurity';
-import { AlertCircle, Zap, Clock, Trophy } from 'lucide-react';
+import { AlertCircle, Zap, Clock, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-interface Question {
-  id: string;
-  question: string;
-  optionA: string;
-  optionB: string;
-  optionC: string;
-  optionD: string;
-  category: string;
-}
-
-export default function QuizInterface() {
+export default function SynchronizedQuiz() {
   const router = useRouter();
   const [socket, setSocket] = useState<Socket | null>(null);
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  
+  // Dynamic Synchronous Match States
+  const [matchState, setMatchState] = useState('DRAFT'); // WAITING_ROOM, COUNTDOWN, QUESTION, REVEAL_ANSWER, ENDED
+  const [countdown, setCountdown] = useState(3);
+  const [question, setQuestion] = useState<any>(null);
+  const [timer, setTimer] = useState(15);
   const [selectedOpt, setSelectedOpt] = useState<string | null>(null);
   const [answered, setAnswered] = useState(false);
-  const [score, setScore] = useState(0);
-  const [timer, setTimer] = useState(15);
+  const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
   const [securityLogs, setSecurityLogs] = useState<string[]>([]);
-  const [quizFinished, setQuizFinished] = useState(false);
-  const [loading, setLoading] = useState(true);
+  
+  // Analytics end summary
+  const [analytics, setAnalytics] = useState<any>(null);
 
-  const logSecurityViolation = useCallback((msg: string) => {
-    setSecurityLogs((prev) => [msg, ...prev]);
-  }, []);
-
-  useQuizSecurity(logSecurityViolation);
+  useQuizSecurity((msg) => setSecurityLogs((prev) => [msg, ...prev]));
 
   useEffect(() => {
     const token = localStorage.getItem('nr_token');
@@ -47,231 +38,221 @@ export default function QuizInterface() {
     const s = io(host, { auth: { token } });
     setSocket(s);
 
-    fetch(`${host}/api/questions`)
-      .then((res) => res.json())
-      .then((data) => {
-        setQuestions(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-
-    s.on('quiz:ack', (ack: { score: number; isCorrect: boolean }) => {
-      setScore(ack.score);
+    s.on('match:sync-state', (match: any) => {
+      setMatchState(match.status);
+      if (match.status === 'QUESTION' && match.currentQuestion) {
+        setQuestion(match.currentQuestion);
+        setTimer(15);
+        setSelectedOpt(null);
+        setAnswered(false);
+        setCorrectAnswer(null);
+      } else if (match.status === 'COUNTDOWN') {
+        runCountdownSequence();
+      } else if (match.status === 'ENDED' && match.analytics) {
+        setAnalytics(match.analytics);
+      }
     });
 
-    s.on('quiz:security-alert', (alert: { error: string }) => {
-      logSecurityViolation(alert.error);
+    s.on('quiz:reveal-answer', (data: { correctAnswer: string; explanation?: string }) => {
+      setMatchState('REVEAL_ANSWER');
+      setCorrectAnswer(data.correctAnswer);
     });
 
     return () => {
       s.disconnect();
     };
-  }, [router, logSecurityViolation]);
+  }, [router]);
 
-  useEffect(() => {
-    if (socket && questions.length > 0 && currentIndex < questions.length) {
-      socket.emit('quiz:request-question', { questionId: questions[currentIndex].id });
-      setTimer(15);
-      setSelectedOpt(null);
-      setAnswered(false);
-    }
-  }, [socket, questions, currentIndex]);
-
-  useEffect(() => {
-    if (quizFinished || loading || questions.length === 0) return;
-
+  const runCountdownSequence = () => {
+    setCountdown(3);
     const interval = setInterval(() => {
-      setTimer((prev) => {
+      setCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
-          handleAutoSubmit();
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
-
-    return () => clearInterval(interval);
-  }, [currentIndex, quizFinished, loading, questions]);
-
-  const handleAutoSubmit = () => {
-    if (!answered) {
-      submitAnswer(null);
-    }
   };
 
-  const submitAnswer = (option: string | null) => {
-    if (answered || !socket || questions.length === 0) return;
+  // Question Timer Countdown
+  useEffect(() => {
+    if (matchState !== 'QUESTION') return;
+    const interval = setInterval(() => {
+      setTimer((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [matchState]);
+
+  const submitAnswer = (option: string) => {
+    if (answered || !socket || matchState !== 'QUESTION') return;
     setSelectedOpt(option);
     setAnswered(true);
 
     socket.emit('quiz:submit-answer', {
-      questionId: questions[currentIndex].id,
+      questionId: question.id,
       selectedAnswer: option,
     });
-
-    setTimeout(() => {
-      if (currentIndex + 1 < questions.length) {
-        setCurrentIndex((prev) => prev + 1);
-      } else {
-        setQuizFinished(true);
-      }
-    }, 450);
   };
 
-  if (loading) {
+  if (matchState === 'DRAFT' || matchState === 'WAITING_ROOM') {
     return (
       <div className="min-h-screen bg-[#0a192f] flex flex-col justify-center items-center text-white">
         <div className="w-16 h-16 border-4 border-t-[#39ff14] border-[#00f5ff]/20 rounded-full animate-spin mb-4" />
-        <p className="text-[#00f5ff] tracking-widest text-xs uppercase">Establishing Nuclear Link...</p>
+        <p className="text-[#00f5ff] tracking-widest text-xs uppercase">Connecting to Arena Sync Stream...</p>
       </div>
     );
   }
 
-  if (questions.length === 0) {
+  if (matchState === 'COUNTDOWN') {
     return (
-      <div className="min-h-screen bg-[#0a192f] flex justify-center items-center text-white p-4">
-        <div className="text-center p-8 border border-red-500/30 rounded-xl bg-red-950/20 max-w-sm">
-          <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-3" />
-          <p className="text-sm">No questions loaded. Contact your system admin.</p>
+      <main className="relative flex items-center justify-center min-h-screen p-4">
+        <NeutronBackground />
+        <div className="text-center text-white">
+          <p className="text-xs uppercase tracking-widest text-[#00f5ff] mb-2 animate-pulse">Synchronizing Competitors</p>
+          <motion.h2 
+            key={countdown}
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1.2, opacity: 1 }}
+            className="text-8xl font-black text-[#39ff14] shadow-neon"
+          >
+            {countdown}
+          </motion.h2>
         </div>
-      </div>
+      </main>
     );
   }
 
-  if (quizFinished) {
+  if (matchState === 'ENDED') {
     return (
-      <div className="relative min-h-screen flex items-center justify-center p-4">
+      <main className="relative flex items-center justify-center min-h-screen p-4">
         <NeutronBackground />
         <div className="max-w-md w-full bg-[#0d1e36]/90 border border-[#39ff14]/30 rounded-xl p-8 text-center backdrop-blur-md text-white">
-          <Trophy className="w-16 h-16 text-[#39ff14] mx-auto mb-4" />
-          <h2 className="text-3xl font-extrabold text-[#39ff14] mb-2">Quiz Complete!</h2>
-          <div className="bg-[#071324] border border-[#00f5ff]/20 rounded p-4 mb-6 mt-4">
-            <span className="text-xs uppercase text-[#00f5ff] tracking-widest block mb-1">Your Score</span>
-            <span className="text-5xl font-black text-white">{score} Pts</span>
-          </div>
+          <TrophyBanner analytics={analytics} />
           <button
             onClick={() => router.push('/leaderboard')}
-            className="w-full bg-[#00f5ff] text-black font-bold py-3 rounded-lg"
+            className="w-full bg-[#00f5ff] text-black font-bold py-3 rounded-lg mt-6"
           >
-            Go to Live Leaderboard
+            Go to Live Standings
           </button>
         </div>
-      </div>
+      </main>
     );
   }
 
-  const currentQuestion = questions[currentIndex];
-
   return (
-    <main className="relative min-h-screen p-4 text-white flex flex-col justify-between">
+    <main className="relative flex flex-col justify-between min-h-screen p-4 text-white">
       <NeutronBackground />
+      
       <header className="w-full max-w-4xl mx-auto flex items-center justify-between bg-[#0d1e36]/80 border border-[#00f5ff]/20 rounded-xl p-4 backdrop-blur-sm">
-        <div className="flex items-center space-x-3">
-          <div className="bg-[#39ff14]/10 border border-[#39ff14] p-2 rounded">
-            <Zap className="w-5 h-5 text-[#39ff14]" />
-          </div>
-          <div>
-            <p className="text-xs text-gray-400">Score Tracker</p>
-            <p className="text-lg font-bold text-white">{score} <span className="text-xs font-normal text-[#39ff14]">pts</span></p>
-          </div>
-        </div>
-        <div className="flex flex-col items-end">
-          <p className="text-xs text-[#00f5ff] font-bold">Progress</p>
-          <p className="text-lg font-extrabold">{currentIndex + 1} / {questions.length}</p>
+        <span className="bg-[#00f5ff]/10 text-[#00f5ff] text-xs font-semibold px-2.5 py-1 rounded border border-[#00f5ff]/20">
+          {question?.category || 'General'}
+        </span>
+        <div className="flex items-center space-x-1.5 text-orange-400 font-mono">
+          <Clock className="w-4 h-4 animate-pulse" />
+          <span className="text-sm font-bold">{timer}s</span>
         </div>
       </header>
 
-      <div className="w-full max-w-2xl mx-auto my-6 flex-grow flex flex-col justify-center">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={currentIndex}
-            initial={{ opacity: 0, x: 50 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -50 }}
-            transition={{ duration: 0.25 }}
-            className="bg-[#0d1e36]/90 border border-[#00f5ff]/30 rounded-2xl p-6 md:p-8 backdrop-blur-md relative"
-          >
-            <div className="absolute top-0 left-0 w-full h-1 bg-[#0a192f] rounded-t-2xl overflow-hidden">
-              <motion.div
-                className="h-full bg-gradient-to-r from-[#39ff14] to-red-500"
-                initial={{ width: '100%' }}
-                animate={{ width: `${(timer / 15) * 100}%` }}
-                transition={{ duration: 1, ease: 'linear' }}
-              />
-            </div>
+      <div className="flex flex-col justify-center flex-grow w-full max-w-2xl mx-auto my-6">
+        <div className="bg-[#0d1e36]/90 border border-[#00f5ff]/30 rounded-2xl p-6 md:p-8 backdrop-blur-md relative">
+          <div className="absolute top-0 left-0 w-full h-1 bg-[#0a192f] rounded-t-2xl overflow-hidden">
+            <motion.div
+              className="h-full bg-gradient-to-r from-[#39ff14] to-red-500"
+              initial={{ width: '100%' }}
+              animate={{ width: `${(timer / 15) * 100}%` }}
+              transition={{ duration: 1, ease: 'linear' }}
+            />
+          </div>
 
-            <div className="flex items-center justify-between mb-6">
-              <span className="bg-[#00f5ff]/10 text-[#00f5ff] text-xs font-semibold px-2.5 py-1 rounded border border-[#00f5ff]/20">
-                {currentQuestion.category}
-              </span>
-              <div className="flex items-center space-x-1.5 text-orange-400 font-mono">
-                <Clock className="w-4 h-4 animate-pulse" />
-                <span className="text-sm font-bold">{timer}s</span>
-              </div>
-            </div>
+          <h2 className="mb-8 text-xl font-bold leading-relaxed text-white md:text-2xl">
+            {question?.question}
+          </h2>
 
-            <h2 className="text-xl md:text-2xl font-bold mb-8 text-white leading-relaxed">
-              {currentQuestion.question}
-            </h2>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {([
+              { key: 'A', val: question?.optionA },
+              { key: 'B', val: question?.optionB },
+              { key: 'C', val: question?.optionC },
+              { key: 'D', val: question?.optionD },
+            ] as const).map((opt) => {
+              const isSelected = selectedOpt === opt.key;
+              const isCorrect = correctAnswer === opt.key;
+              const isWrongAndSelected = correctAnswer && isSelected && correctAnswer !== opt.key;
+              
+              let buttonStyle = 'bg-[#071324]/80 border-[#00f5ff]/20 hover:border-[#00f5ff] text-gray-300';
+              if (isSelected) buttonStyle = 'bg-[#39ff14]/15 border-[#39ff14] text-white';
+              if (correctAnswer) {
+                if (isCorrect) buttonStyle = 'bg-green-950/40 border-green-500 text-green-300';
+                if (isWrongAndSelected) buttonStyle = 'bg-red-950/40 border-red-500 text-red-300';
+              }
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {([
-                { key: 'A', val: currentQuestion.optionA },
-                { key: 'B', val: currentQuestion.optionB },
-                { key: 'C', val: currentQuestion.optionC },
-                { key: 'D', val: currentQuestion.optionD },
-              ] as const).map((opt) => (
+              return (
                 <button
                   key={opt.key}
-                  disabled={answered}
+                  disabled={answered || matchState === 'REVEAL_ANSWER'}
                   onClick={() => submitAnswer(opt.key)}
-                  className={`flex items-center text-left p-4 rounded-xl border transition-all text-sm group ${
-                    selectedOpt === opt.key
-                      ? 'bg-[#39ff14]/15 border-[#39ff14] text-white shadow-lg shadow-[#39ff14]/10'
-                      : 'bg-[#071324]/80 border-[#00f5ff]/20 hover:border-[#00f5ff] text-gray-300'
-                  }`}
+                  className={`flex items-center text-left p-4 rounded-xl border transition-all text-sm group ${buttonStyle}`}
                 >
                   <span className={`w-8 h-8 flex items-center justify-center rounded-lg font-bold mr-3 text-xs transition ${
-                    selectedOpt === opt.key
-                      ? 'bg-[#39ff14] text-black'
-                      : 'bg-[#00f5ff]/10 text-[#00f5ff] group-hover:bg-[#00f5ff] group-hover:text-black'
+                    isSelected ? 'bg-[#39ff14] text-black' : 'bg-[#00f5ff]/10 text-[#00f5ff]'
                   }`}>
                     {opt.key}
                   </span>
                   <span className="flex-grow">{opt.val}</span>
                 </button>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-between mt-8 pt-4 border-t border-[#00f5ff]/10">
-              <button
-                disabled={answered}
-                onClick={() => submitAnswer(null)}
-                className="text-xs font-bold text-gray-400 hover:text-white transition"
-              >
-                Skip Question
-              </button>
-              <span className="text-xs text-[#00f5ff] italic">
-                System Active
-              </span>
-            </div>
-          </motion.div>
-        </AnimatePresence>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {securityLogs.length > 0 && (
-        <div className="fixed bottom-4 right-4 max-w-sm w-full bg-red-950/90 border border-red-500/50 p-4 rounded-xl shadow-2xl backdrop-blur-md">
-          <p className="text-xs font-bold text-red-400 flex items-center mb-1 uppercase tracking-wider">
+        <div className="fixed bottom-4 right-4 max-w-sm w-full bg-red-950/90 border border-red-500/50 p-4 rounded-xl shadow-2xl backdrop-blur-md text-[10px] font-mono">
+          <p className="flex items-center mb-1 text-xs font-bold tracking-wider text-red-400 uppercase">
             <AlertCircle className="w-4 h-4 mr-1" /> Warnings ({securityLogs.length})
           </p>
-          <div className="max-h-20 overflow-y-auto text-[10px] font-mono text-red-200 space-y-1">
-            {securityLogs.map((log, i) => (
-              <p key={i} className="border-b border-red-900/40 pb-1">{log}</p>
-            ))}
-          </div>
+          {securityLogs.map((log, i) => (
+            <p key={i} className="pb-1 border-b border-red-900/40">{log}</p>
+          ))}
         </div>
       )}
     </main>
+  );
+}
+
+function TrophyBanner({ analytics }: { analytics: any }) {
+  if (!analytics) return null;
+  return (
+    <div className="space-y-4">
+      <TrophyIcon className="w-16 h-16 text-[#39ff14] mx-auto mb-4" />
+      <h2 className="text-3xl font-extrabold text-[#39ff14]">MATCH CONCLUDED</h2>
+      <div className="bg-[#071324] border border-[#00f5ff]/20 rounded-lg p-4 space-y-2 mt-4 text-left font-mono text-xs">
+        <p><span className="text-gray-400">Total Correct Options Selected:</span> {analytics.totalCorrect}</p>
+        <p><span className="text-gray-400">Average Response Time:</span> {analytics.averageResponseTime}s</p>
+        {analytics.fastestAnswer && (
+          <p><span className="text-gray-400">Fastest Competitor Answer:</span> {analytics.fastestAnswer.name} ({analytics.fastestAnswer.time}s)</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TrophyIcon(props: any) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+      <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+      <path d="M4 22h16" />
+      <path d="M10 14.66V17c0 .55-.45 1-1 1H4v2h16v-2h-5c-.55 0-1-.45-1-1v-2.34" />
+      <path d="M12 2a6 6 0 0 1 6 6v3.5c0 1.66-1.34 3-3 3H9c-1.66 0-3-1.34-3-3V8a6 6 0 0 1 6-6z" />
+    </svg>
   );
 }

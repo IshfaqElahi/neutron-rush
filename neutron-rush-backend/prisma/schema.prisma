@@ -15,7 +15,7 @@ model User {
   teamName        String?
   phone           String?
   playerId        String       @unique
-  role            String       @default("PLAYER")
+  role            String       @default("PLAYER") // "PLAYER" | "ADMIN"
   createdAt       DateTime     @default(now())
   
   responses       Response[]
@@ -31,39 +31,36 @@ model Question {
   optionB       String
   optionC       String
   optionD       String
-  correct       String
+  correct       String     // "A" | "B" | "C" | "D"
   marks         Int        @default(10)
   negativeMarks Int        @default(0)
   category      String     @default("General")
-  difficulty    String     @default("Medium")
-  explanation   String?
+  difficulty    String     @default("Medium") // "Easy" | "Medium" | "Hard"
+  used          Boolean    @default(false)    // Tracks if used in the current run
   
   responses     Response[]
 }
 
 model QuizState {
-  id                 String     @id @default("ACTIVE_QUIZ")
-  title              String     @default("Neutron Rush Championship")
-  status             String     @default("DRAFT") // "DRAFT" | "ACTIVE" | "FROZEN" | "ENDED"
-  timerSeconds       Int        @default(15)
-  rulesText          String     @default("Total questions: 10\\nTime per question: 15 seconds\\nPositive marking: +10\\nNegative marking: 0\\nNo backtracking\\nAuto submission on timeout")
-  totalQuestions     Int        @default(10)
-  positiveMarks      Int        @default(10)
-  negativeMarks      Int        @default(0)
-  allowBacktracking  Boolean    @default(false)
-  autoSubmit         Boolean    @default(true)
-  showSchool         Boolean    @default(true) // Toggles University/School
-  showTeamName       Boolean    @default(true) // Toggles Team Name
-  updatedAt          DateTime   @updatedAt
+  id                String     @id @default("ACTIVE_QUIZ")
+  title             String     @default("Neutron Rush Championship")
+  status            String     @default("DRAFT")  // "DRAFT" | "WAITING_ROOM" | "COUNTDOWN" | "QUESTION" | "REVEAL_ANSWER" | "ENDED"
+  timerSeconds      Int        @default(15)
+  showSchool        Boolean    @default(true)
+  showTeamName      Boolean    @default(true)
+  currentQuestionId String?
+  registrationLocked Boolean   @default(false)
+  updatedAt         DateTime   @updatedAt
 }
 
 model Response {
   id             String   @id @default(uuid())
   userId         String
   questionId     String
-  selectedAnswer String?
+  selectedAnswer String?  // Null on timeout
   isCorrect      Boolean  @default(false)
   timeTakenMs    Int      @default(0)
+  scoreEarned    Int      @default(0)
   createdAt      DateTime @default(now())
 
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -79,9 +76,9 @@ model Leaderboard {
   score          Int      @default(0)
   accuracy       Float    @default(0.0)
   totalTimeMs    Int      @default(0)
+  previousRank   Int      @default(0)  // Used to calculate visual up/down indicators
+  currentRank    Int      @default(0)
   updatedAt      DateTime @updatedAt
 
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([score(sort: Desc), totalTimeMs(sort: Asc)])
 }
