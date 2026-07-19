@@ -1,0 +1,87 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id              String       @id @default(uuid())
+  name            String
+  email           String?      @unique
+  school          String?
+  teamName        String?
+  phone           String?
+  playerId        String       @unique
+  role            String       @default("PLAYER")
+  createdAt       DateTime     @default(now())
+  
+  responses       Response[]
+  leaderboardRank Leaderboard?
+
+  @@index([playerId])
+}
+
+model Question {
+  id            String     @id @default(uuid())
+  question      String
+  optionA       String
+  optionB       String
+  optionC       String
+  optionD       String
+  correct       String
+  marks         Int        @default(10)
+  negativeMarks Int        @default(0)
+  category      String     @default("General")
+  difficulty    String     @default("Medium")
+  explanation   String?
+  
+  responses     Response[]
+}
+
+model QuizState {
+  id                 String     @id @default("ACTIVE_QUIZ")
+  title              String     @default("Neutron Rush Championship")
+  status             String     @default("DRAFT") // "DRAFT" | "ACTIVE" | "FROZEN" | "ENDED"
+  timerSeconds       Int        @default(15)
+  rulesText          String     @default("Total questions: 10\\nTime per question: 15 seconds\\nPositive marking: +10\\nNegative marking: 0\\nNo backtracking\\nAuto submission on timeout")
+  totalQuestions     Int        @default(10)
+  positiveMarks      Int        @default(10)
+  negativeMarks      Int        @default(0)
+  allowBacktracking  Boolean    @default(false)
+  autoSubmit         Boolean    @default(true)
+  showSchool         Boolean    @default(true) // Toggles University/School
+  showTeamName       Boolean    @default(true) // Toggles Team Name
+  updatedAt          DateTime   @updatedAt
+}
+
+model Response {
+  id             String   @id @default(uuid())
+  userId         String
+  questionId     String
+  selectedAnswer String?
+  isCorrect      Boolean  @default(false)
+  timeTakenMs    Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question       Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId])
+  @@index([userId])
+}
+
+model Leaderboard {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  score          Int      @default(0)
+  accuracy       Float    @default(0.0)
+  totalTimeMs    Int      @default(0)
+  updatedAt      DateTime @updatedAt
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([score(sort: Desc), totalTimeMs(sort: Asc)])
+}
