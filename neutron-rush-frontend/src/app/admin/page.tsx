@@ -64,15 +64,22 @@ export default function AdminConsole() {
     setSocket(s);
 
     fetch(`${host}/api/quiz-config`)
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error('Backend responded with error');
+        return res.json();
+      })
       .then((data) => {
         setRulesForm({
-          title: data.title || 'Neutron Rush Championship',
-          timerSeconds: data.timerSeconds || 15,
-          countdownSeconds: data.countdownSeconds || 3,
-          showSchool: data.showSchool !== undefined ? data.showSchool : true,
-          showTeamName: data.showTeamName !== undefined ? data.showTeamName : true,
+          title: data?.title || 'Neutron Rush Championship',
+          timerSeconds: data?.timerSeconds || 15,
+          countdownSeconds: data?.countdownSeconds || 3,
+          showSchool: data?.showSchool !== undefined ? data.showSchool : true,
+          showTeamName: data?.showTeamName !== undefined ? data.showTeamName : true,
         });
+      })
+      .catch((err) => {
+        addLog("Failed to load initial settings. Schema out of sync?");
+        console.error(err);
       });
 
     fetchQuestions(host);
@@ -101,9 +108,22 @@ export default function AdminConsole() {
 
   const fetchQuestions = (host: string) => {
     fetch(`${host}/api/admin/questions-list`)
-      .then((res) => res.json())
-      .then((data) => setQuestionsList(data))
-      .catch((err) => console.error(err));
+      .then((res) => {
+        if (!res.ok) throw new Error('Backend failed to load questions');
+        return res.json();
+      })
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setQuestionsList(data);
+        } else {
+          setQuestionsList([]);
+        }
+      })
+      .catch((err) => {
+        addLog("Failed to retrieve questions list. Check DB connection.");
+        console.error(err);
+        setQuestionsList([]);
+      });
   };
 
   const addLog = (msg: string) => {
@@ -166,10 +186,9 @@ export default function AdminConsole() {
     }
   };
 
-  // One-Click Client-Side CSV Exporter
   const handleExportCSV = () => {
     if (players.length === 0) {
-      alert('No player standings available to compile.');
+      alert('No player standings available.');
       return;
     }
 
@@ -322,7 +341,7 @@ export default function AdminConsole() {
                   className="flex-grow bg-[#071324] border border-gray-700 rounded p-2 text-xs text-white"
                 >
                   <option value="">-- Let System Select Random Unused Question --</option>
-                  {questionsList.map((q) => (
+                  {Array.isArray(questionsList) && questionsList.map((q) => (
                     <option key={q.id} value={q.id}>
                       [{q.category}] {q.question.slice(0, 50)}...
                     </option>
@@ -368,7 +387,7 @@ export default function AdminConsole() {
                 <div>
                   <h3 className="text-xs uppercase text-[#00f5ff] font-bold tracking-wider mb-2">Fastest Correct Responders</h3>
                   <div className="space-y-1 font-mono text-xs">
-                    {stats.fastest.length > 0 ? (
+                    {stats.fastest && stats.fastest.length > 0 ? (
                       stats.fastest.map((f: any, i: number) => (
                         <p key={i}>{i+1}. {f.name} - <span className="text-[#39ff14]">{f.time}s</span></p>
                       ))

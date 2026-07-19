@@ -155,8 +155,7 @@ export default function LandingPage() {
         {!showRules ? (
           <div className="flex flex-col space-y-6">
             <p className="text-sm text-center text-gray-300 md:text-base">
-              Synchronized Live Multiplayer Arena. Questions are pushed instantly by the admin. 
-              Scoring rewards correctness and quick responses.
+              Welcome to the Neutron Rush Championship! Prepare to test your knowledge and reflexes in a high-stakes quiz competition. Before you can enter the waiting room, please review the rules and ensure you understand the tournament specifications. Once you're ready, click "Begin Register" to secure your spot in the lobby.
             </p>
             <div className="grid grid-cols-2 gap-4">
               <button
