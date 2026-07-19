@@ -109,7 +109,7 @@ export default function LandingPage() {
             </div>
             <div className="bg-[#071324] p-4 rounded-lg border border-[#00f5ff]/20 text-center">
               <span className="block mb-1 text-xs text-gray-400 uppercase">Core Connection</span>
-              <span className="flex items-center justify-center block mt-2 text-xs font-bold text-green-400">
+              <span className="items-center justify-center block mt-2 text-xs font-bold text-green-400 ">
                 <ShieldCheck className="w-4 h-4 mr-1" /> Active Sync
               </span>
             </div>
