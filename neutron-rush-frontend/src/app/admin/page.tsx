@@ -2,9 +2,15 @@
 
 import React, { useState, useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { Play, Square, Settings, Upload, Database, Users, AlertTriangle, Save } from 'lucide-react';
+import { NeutronBackground } from '../../components/NeutronBackground';
+import { Play, Square, Settings, Upload, Database, Users, AlertTriangle, Save, Lock, LogOut } from 'lucide-react';
 
 export default function AdminConsole() {
+  const [isAdminAuth, setIsAdminAuth] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [loginError, setLoginError] = useState('');
+
+  // Sockets & System States
   const [socket, setSocket] = useState<Socket | null>(null);
   const [quizStatus, setQuizStatus] = useState('DRAFT');
   const [rawJson, setRawJson] = useState('');
@@ -26,7 +32,35 @@ export default function AdminConsole() {
 
   const [savingRules, setSavingRules] = useState(false);
 
+  // 1. Session Storage Authentication Guard
   useEffect(() => {
+    const authStatus = sessionStorage.getItem('nr_admin_authorized');
+    if (authStatus === 'true') {
+      setIsAdminAuth(true);
+    }
+  }, []);
+
+  const handleLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passwordInput === 'rush123') {
+      sessionStorage.setItem('nr_admin_authorized', 'true');
+      setIsAdminAuth(true);
+      setLoginError('');
+    } else {
+      setLoginError('Incorrect administration credential key.');
+    }
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('nr_admin_authorized');
+    setIsAdminAuth(false);
+    setPasswordInput('');
+  };
+
+  // 2. Load Core Admin Sync Functions (Only executes if authenticated)
+  useEffect(() => {
+    if (!isAdminAuth) return;
+
     const token = localStorage.getItem('nr_token') || '';
     const host = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
     const s = io(host, { auth: { token } });
@@ -62,7 +96,7 @@ export default function AdminConsole() {
     return () => {
       s.disconnect();
     };
-  }, []);
+  }, [isAdminAuth]);
 
   const addLog = (msg: string) => {
     setSystemLogs((prev) => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev]);
@@ -123,6 +157,52 @@ export default function AdminConsole() {
     }
   };
 
+  // RENDER INTERFACE 1: Admin Authorization Shield
+  if (!isAdminAuth) {
+    return (
+      <main className="relative flex items-center justify-center min-h-screen p-4 text-white">
+        <NeutronBackground />
+        <div className="max-w-md w-full bg-[#0d1e36]/90 border border-[#00f5ff]/30 rounded-2xl p-8 shadow-2xl backdrop-blur-md">
+          <div className="flex flex-col items-center mb-6 text-center">
+            <div className="bg-[#0a192f] p-4 rounded-full border border-[#00f5ff]/40 mb-3 text-[#00f5ff]">
+              <Lock className="w-8 h-8" />
+            </div>
+            <h2 className="text-xl font-black tracking-wider text-white uppercase">Admin Shield</h2>
+            <p className="mt-1 text-xs text-gray-400">Enter password keys to access control mechanics</p>
+          </div>
+
+          <form onSubmit={handleLoginSubmit} className="space-y-4 text-sm">
+            <div>
+              <label className="block text-xs font-bold text-[#00f5ff] uppercase mb-1">Authorization Code</label>
+              <input
+                type="password"
+                required
+                placeholder="••••••••"
+                className="w-full bg-[#071324] border border-[#00f5ff]/30 rounded px-4 py-2 text-white outline-none focus:border-[#39ff14] transition text-center tracking-widest"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+              />
+            </div>
+
+            {loginError && (
+              <p className="p-2 mt-1 text-xs font-bold text-center text-red-400 border rounded bg-red-950/40 border-red-500/20">
+                {loginError}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              className="w-full bg-[#39ff14] hover:bg-[#32d912] text-black font-bold py-2.5 rounded text-sm transition"
+            >
+              Authorize Access
+            </button>
+          </form>
+        </div>
+      </main>
+    );
+  }
+
+  // RENDER INTERFACE 2: Core Admin Dashboard Console
   return (
     <main className="min-h-screen bg-[#070c14] text-white p-6 font-sans">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -130,6 +210,13 @@ export default function AdminConsole() {
           <div>
             <h1 className="text-3xl font-black tracking-wider text-[#00f5ff]">ADMIN PANEL</h1>
           </div>
+          <button
+            onClick={handleLogout}
+            className="flex items-center px-4 py-2 mt-2 space-x-2 text-xs font-bold text-red-400 transition border rounded-lg bg-red-950/60 hover:bg-red-900/60 border-red-500/30 md:mt-0"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Lock Console</span>
+          </button>
         </div>
 
         {/* Info Blocks */}
@@ -160,7 +247,7 @@ export default function AdminConsole() {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="space-y-6 lg:col-span-2">
             
-            {/* Quick Engine Controls */}
+            {/* Controls */}
             <div className="bg-[#0d1e36] p-6 rounded-xl border border-gray-800">
               <h2 className="flex items-center mb-4 space-x-2 text-lg font-bold">
                 <Database className="w-5 h-5 text-[#39ff14]" />
