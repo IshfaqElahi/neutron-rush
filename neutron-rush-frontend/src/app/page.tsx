@@ -6,6 +6,35 @@ import { io, Socket } from 'socket.io-client';
 import { NeutronBackground } from '../components/NeutronBackground';
 import { Radiation, FileText, Play, ShieldAlert, Radio, ShieldCheck } from 'lucide-react';
 
+const defaultRulesText = `⚛️ NEUTRON RUSH ARENA RULES & PARTICIPANT CHARTER ⚛️
+
+Please read the rules carefully before entering the waiting lobby. Once the match begins, your focus and execution will determine your ranking in the reaction chain.
+
+1. THE TOURNAMENT STATE & FLOW
+• Waiting Lobby: Once registered, you will enter the synchronized waiting room. Standby here until the Administrator triggers the match.
+• Registration Lock: As soon as the match starts, registration automatically closes.
+• The Synchronized Countdown: Before every question, a synchronized countdown will run on your screen. Prepare yourself immediately.
+
+2. RESPONSE TIMING & SCORING LOGIC
+Every question has a strict countdown timer managed directly by the server. Your points depend on both correctness and speed:
+• Answering within 0.00 to 1.00 seconds: +15 Points (Lightning response)
+• Answering within 1.01 to 2.00 seconds: +13 Points (Fast response)
+• Answering within 2.01 to 3.00 seconds: +11 Points (Good response)
+• Answering after 3.00 seconds (but before timeout): +10 Points (Standard correct)
+• Incorrect or Unanswered Questions: 0 Points
+• No backtracking: Your choice is locked the millisecond you click. You cannot change your answer or skip backward.
+
+3. ARENA CONSTRAINTS & SECURITY (ANTI-CHEAT)
+To ensure absolute fairness, the system runs an active security shield:
+• Tab Switching: Leaving the browser tab, minimizing the window, or switching devices will instantly flag your connection and log a security alert for the administrator.
+• Inspect & Copy/Paste blockades: Standard developer tools, right-clicks, and clipboard functions are disabled inside the arena.
+• Back Button Lock: Browser navigation locks are active. Attempting to navigate away will log a warning.
+
+4. EVENT EVENTS (WHAT TO EXPECT)
+• End Early: If all competitors submit their answers before the timer runs out, the admin may end the question early to speed up the round.
+• Match Pauses: In the event of system adjustments or coordinator discussions, the admin may pause the quiz. Your screen will freeze and your timer will lock until the match is resumed.
+• Standings Update: After every question, a live standing list will render. Pay attention to your ranking and movement indicators (e.g. ↑ +2) to track your upward reaction!`;
+
 export default function LandingPage() {
   const router = useRouter();
   const [showRules, setShowRules] = useState(false);
@@ -179,7 +208,7 @@ export default function LandingPage() {
             <div className="bg-[#071324] border border-[#00f5ff]/20 rounded-lg p-5 text-sm space-y-3 max-h-48 overflow-y-auto">
               <h3 className="font-bold text-[#00f5ff] uppercase">Championship Rules:</h3>
               <div className="font-mono text-xs leading-relaxed text-gray-300 whitespace-pre-line md:text-sm">
-                {config?.rulesText || "Loading rules parameters..."}
+                {config?.rulesText || defaultRulesText}
               </div>
             </div>
 
