@@ -2,8 +2,40 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Core Mobile Optimization and Resets */
 body {
   background-color: #0a192f;
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
+  padding: 0;
+  overflow-x: hidden;
+  
+  /* Disable standard text selection (Anti-Cheat & UX helper) */
+  -webkit-user-select: none;
+  user-select: none;
+
+  /* Eliminate the grey selection highlight box on tap (iOS/Android Chrome) */
+  -webkit-tap-highlight-color: transparent;
+
+  /* Remove 300ms double-tap delay for rapid button response */
+  touch-action: manipulation;
+}
+
+/* Disable iOS long-press context popup menu across the app */
+* {
+  -webkit-touch-callout: none;
+}
+
+/* Allow normal typing and selection within inputs and selectors */
+input, textarea, select {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  touch-action: auto !important;
+  
+  /* Set minimum font size to 16px to prevent iOS Safari from auto-zooming on focus */
+  font-size: 16px !important;
+}
+
+/* Ensure smooth scrolling behavior on mobile containers */
+.overflow-y-auto {
+  -webkit-overflow-scrolling: touch;
 }
