@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { NeutronBackground } from '../components/NeutronBackground';
-import { Radiation, FileText, Play, ShieldAlert, Users, Radio, ShieldCheck } from 'lucide-react';
+import { Radiation, FileText, Play, ShieldAlert, Radio, ShieldCheck } from 'lucide-react';
 
 export default function LandingPage() {
   const router = useRouter();
@@ -14,7 +14,6 @@ export default function LandingPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
-  // Real-Time Waiting Room States
   const [inLobby, setInLobby] = useState(false);
   const [config, setConfig] = useState<any>(null);
   const [lobbyPlayers, setLobbyPlayers] = useState<any[]>([]);
@@ -29,7 +28,6 @@ export default function LandingPage() {
       .catch((err) => console.error("Could not fetch quiz configuration:", err));
   }, []);
 
-  // Connect player socket once registered
   const connectLobbySocket = (token: string) => {
     const host = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
     const s = io(host, { auth: { token } });
@@ -53,7 +51,7 @@ export default function LandingPage() {
     });
 
     s.on('player:kicked', () => {
-      alert('You have been removed from the lobby by the administrator.');
+      alert('You have been removed from the lobby.');
       localStorage.removeItem('nr_token');
       window.location.reload();
     });
@@ -89,6 +87,8 @@ export default function LandingPage() {
     }
   };
 
+  const hasAnyOptionalFields = config?.showSchool || config?.showTeamName;
+
   if (inLobby) {
     return (
       <main className="relative flex flex-col items-center justify-center min-h-screen p-4 text-white">
@@ -105,12 +105,12 @@ export default function LandingPage() {
           <div className="grid grid-cols-2 gap-4 my-6">
             <div className="bg-[#071324] p-4 rounded-lg border border-[#00f5ff]/20 text-center">
               <span className="block mb-1 text-xs text-gray-400 uppercase">Players Connected</span>
-              <span className="text-3xl font-black text-[#39ff14]">{lobbyPlayers.length}</span>
+              <span className="text-3xl font-black text-[#39ff14]">{lobbyPlayers.filter(p => p.online).length}</span>
             </div>
             <div className="bg-[#071324] p-4 rounded-lg border border-[#00f5ff]/20 text-center">
-              <span className="block mb-1 text-xs text-gray-400 uppercase">Core Connection</span>
-              <span className="items-center justify-center block mt-2 text-xs font-bold text-green-400 ">
-                <ShieldCheck className="w-4 h-4 mr-1" /> Active Sync
+              <span className="block mb-1 text-xs font-bold text-gray-400 uppercase">Lobby Channel</span>
+              <span className="flex items-center justify-center mt-2 text-xs font-bold text-green-400">
+                <ShieldCheck className="w-4 h-4 mr-1" /> Active Link
               </span>
             </div>
           </div>
@@ -120,7 +120,7 @@ export default function LandingPage() {
             <div className="space-y-1 overflow-y-auto font-mono text-sm text-gray-300 max-h-28">
               {lobbyPlayers.map((p, idx) => (
                 <div key={idx} className="flex justify-between pb-1 border-b border-gray-800">
-                  <span>{p.name}</span>
+                  <span className={p.online ? 'text-green-400' : 'text-gray-500'}>{p.name}</span>
                   <span className="text-[11px] text-gray-500">{p.playerId}</span>
                 </div>
               ))}
@@ -197,7 +197,7 @@ export default function LandingPage() {
                 />
               </div>
 
-              {(config?.showSchool || config?.showTeamName) && (
+              {hasAnyOptionalFields && (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   {config?.showSchool && (
                     <div>

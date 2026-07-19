@@ -5,15 +5,14 @@ import { useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { NeutronBackground } from '../../components/NeutronBackground';
 import { useQuizSecurity } from '../../components/useQuizSecurity';
-import { AlertCircle, Zap, Clock, ShieldCheck } from 'lucide-react';
+import { AlertCircle, Zap, Clock, ShieldAlert, Award } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function SynchronizedQuiz() {
   const router = useRouter();
   const [socket, setSocket] = useState<Socket | null>(null);
   
-  // Dynamic Synchronous Match States
-  const [matchState, setMatchState] = useState('DRAFT'); // WAITING_ROOM, COUNTDOWN, QUESTION, REVEAL_ANSWER, ENDED
+  const [matchState, setMatchState] = useState('DRAFT'); 
   const [countdown, setCountdown] = useState(3);
   const [question, setQuestion] = useState<any>(null);
   const [timer, setTimer] = useState(15);
@@ -21,8 +20,7 @@ export default function SynchronizedQuiz() {
   const [answered, setAnswered] = useState(false);
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
   const [securityLogs, setSecurityLogs] = useState<string[]>([]);
-  
-  // Analytics end summary
+  const [quizPaused, setQuizPaused] = useState(false);
   const [analytics, setAnalytics] = useState<any>(null);
 
   useQuizSecurity((msg) => setSecurityLogs((prev) => [msg, ...prev]));
@@ -40,20 +38,31 @@ export default function SynchronizedQuiz() {
 
     s.on('match:sync-state', (match: any) => {
       setMatchState(match.status);
+      setQuizPaused(match.paused);
       if (match.status === 'QUESTION' && match.currentQuestion) {
         setQuestion(match.currentQuestion);
-        setTimer(15);
+        setTimer(match.timerSeconds || 15);
         setSelectedOpt(null);
         setAnswered(false);
         setCorrectAnswer(null);
       } else if (match.status === 'COUNTDOWN') {
-        runCountdownSequence();
+        setCountdown(match.countdownSeconds || 3);
+        runCountdownSequence(match.countdownSeconds || 3);
       } else if (match.status === 'ENDED' && match.analytics) {
         setAnalytics(match.analytics);
       }
     });
 
-    s.on('quiz:reveal-answer', (data: { correctAnswer: string; explanation?: string }) => {
+    s.on('match:paused', () => {
+      setQuizPaused(true);
+    });
+
+    s.on('match:resumed', (data: { remainingSeconds: number }) => {
+      setQuizPaused(false);
+      setTimer(Math.ceil(data.remainingSeconds));
+    });
+
+    s.on('quiz:reveal-answer', (data: { correctAnswer: string }) => {
       setMatchState('REVEAL_ANSWER');
       setCorrectAnswer(data.correctAnswer);
     });
@@ -63,8 +72,8 @@ export default function SynchronizedQuiz() {
     };
   }, [router]);
 
-  const runCountdownSequence = () => {
-    setCountdown(3);
+  const runCountdownSequence = (startVal: number) => {
+    setCountdown(startVal);
     const interval = setInterval(() => {
       setCountdown((prev) => {
         if (prev <= 1) {
@@ -76,9 +85,8 @@ export default function SynchronizedQuiz() {
     }, 1000);
   };
 
-  // Question Timer Countdown
   useEffect(() => {
-    if (matchState !== 'QUESTION') return;
+    if (matchState !== 'QUESTION' || quizPaused) return;
     const interval = setInterval(() => {
       setTimer((prev) => {
         if (prev <= 1) {
@@ -89,10 +97,10 @@ export default function SynchronizedQuiz() {
       });
     }, 1000);
     return () => clearInterval(interval);
-  }, [matchState]);
+  }, [matchState, quizPaused]);
 
   const submitAnswer = (option: string) => {
-    if (answered || !socket || matchState !== 'QUESTION') return;
+    if (answered || !socket || matchState !== 'QUESTION' || quizPaused) return;
     setSelectedOpt(option);
     setAnswered(true);
 
@@ -111,12 +119,25 @@ export default function SynchronizedQuiz() {
     );
   }
 
+  if (matchState === 'EMERGENCY_STOP') {
+    return (
+      <main className="relative flex items-center justify-center min-h-screen p-4">
+        <NeutronBackground />
+        <div className="w-full max-w-md p-8 text-center text-white border border-red-500 bg-red-950/90 rounded-xl">
+          <ShieldAlert className="w-16 h-16 mx-auto mb-4 text-red-500 animate-bounce" />
+          <h2 className="text-3xl font-extrabold text-red-400 uppercase">Match Suspended</h2>
+          <p className="mt-3 text-sm text-red-200">The administrator has executed an Emergency Stop. Standby for sync.</p>
+        </div>
+      </main>
+    );
+  }
+
   if (matchState === 'COUNTDOWN') {
     return (
       <main className="relative flex items-center justify-center min-h-screen p-4">
         <NeutronBackground />
         <div className="text-center text-white">
-          <p className="text-xs uppercase tracking-widest text-[#00f5ff] mb-2 animate-pulse">Synchronizing Competitors</p>
+          <p className="text-xs uppercase tracking-widest text-[#00f5ff] mb-2 animate-pulse">Get Ready</p>
           <motion.h2 
             key={countdown}
             initial={{ scale: 0.5, opacity: 0 }}
@@ -155,11 +176,34 @@ export default function SynchronizedQuiz() {
         <span className="bg-[#00f5ff]/10 text-[#00f5ff] text-xs font-semibold px-2.5 py-1 rounded border border-[#00f5ff]/20">
           {question?.category || 'General'}
         </span>
-        <div className="flex items-center space-x-1.5 text-orange-400 font-mono">
-          <Clock className="w-4 h-4 animate-pulse" />
-          <span className="text-sm font-bold">{timer}s</span>
-        </div>
+        
+        {quizPaused ? (
+          <span className="text-xs uppercase bg-orange-950/40 border border-orange-500/40 text-orange-400 px-3 py-1.5 rounded font-bold animate-pulse">
+            Session Paused
+          </span>
+        ) : (
+          <div className="flex items-center space-x-1.5 text-orange-400 font-mono">
+            <Clock className="w-4 h-4 animate-pulse" />
+            <span className="text-sm font-bold">{timer}s</span>
+          </div>
+        )}
       </header>
+
+      {/* PAUSED MASK SCREEN */}
+      <AnimatePresence>
+        {quizPaused && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-40 flex flex-col items-center justify-center text-white bg-black/70 backdrop-blur-md"
+          >
+            <ShieldAlert className="w-16 h-16 mb-3 text-orange-400 animate-pulse" />
+            <h2 className="text-2xl font-black text-orange-400 uppercase">Match Paused</h2>
+            <p className="mt-1 text-xs text-gray-400">Please wait for the administrator to resume the session.</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex flex-col justify-center flex-grow w-full max-w-2xl mx-auto my-6">
         <div className="bg-[#0d1e36]/90 border border-[#00f5ff]/30 rounded-2xl p-6 md:p-8 backdrop-blur-md relative">
@@ -167,7 +211,7 @@ export default function SynchronizedQuiz() {
             <motion.div
               className="h-full bg-gradient-to-r from-[#39ff14] to-red-500"
               initial={{ width: '100%' }}
-              animate={{ width: `${(timer / 15) * 100}%` }}
+              animate={{ width: quizPaused ? `${(timer / 15) * 100}%` : `${(timer / 15) * 100}%` }}
               transition={{ duration: 1, ease: 'linear' }}
             />
           </div>
@@ -197,7 +241,7 @@ export default function SynchronizedQuiz() {
               return (
                 <button
                   key={opt.key}
-                  disabled={answered || matchState === 'REVEAL_ANSWER'}
+                  disabled={answered || matchState === 'REVEAL_ANSWER' || quizPaused}
                   onClick={() => submitAnswer(opt.key)}
                   className={`flex items-center text-left p-4 rounded-xl border transition-all text-sm group ${buttonStyle}`}
                 >
@@ -232,7 +276,7 @@ function TrophyBanner({ analytics }: { analytics: any }) {
   if (!analytics) return null;
   return (
     <div className="space-y-4">
-      <TrophyIcon className="w-16 h-16 text-[#39ff14] mx-auto mb-4" />
+      <Award className="w-16 h-16 text-[#39ff14] mx-auto mb-4" />
       <h2 className="text-3xl font-extrabold text-[#39ff14]">MATCH CONCLUDED</h2>
       <div className="bg-[#071324] border border-[#00f5ff]/20 rounded-lg p-4 space-y-2 mt-4 text-left font-mono text-xs">
         <p><span className="text-gray-400">Total Correct Options Selected:</span> {analytics.totalCorrect}</p>
@@ -242,17 +286,5 @@ function TrophyBanner({ analytics }: { analytics: any }) {
         )}
       </div>
     </div>
-  );
-}
-
-function TrophyIcon(props: any) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-      <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
-      <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
-      <path d="M4 22h16" />
-      <path d="M10 14.66V17c0 .55-.45 1-1 1H4v2h16v-2h-5c-.55 0-1-.45-1-1v-2.34" />
-      <path d="M12 2a6 6 0 0 1 6 6v3.5c0 1.66-1.34 3-3 3H9c-1.66 0-3-1.34-3-3V8a6 6 0 0 1 6-6z" />
-    </svg>
   );
 }

@@ -17,26 +17,29 @@ const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] }
 });
 
-// Real-Time Memory State for Synchronous Multiplayer
+// Synchronized Match Memory State
 let activeMatch = {
-  status: 'DRAFT',              // DRAFT, WAITING_ROOM, COUNTDOWN, QUESTION, REVEAL_ANSWER, ENDED
+  status: 'DRAFT',              // DRAFT, WAITING_ROOM, COUNTDOWN, QUESTION, REVEAL_ANSWER, ENDED, EMERGENCY_STOP
   currentQuestion: null,
   usedQuestionIds: [],
-  answersReceived: new Map(),   // userId -> { option, timeTakenMs, isCorrect }
+  answersReceived: new Map(),   // userId -> { selectedAnswer, timeTakenMs, isCorrect }
   connectedPlayers: new Map(),  // userId -> { socketId, name, playerId, online: boolean }
-  questionStartMarker: 0
+  questionStartMarker: 0,
+  paused: false,
+  pauseTimeMarker: 0,
+  timeLimitMs: 15000,
+  countdownSeconds: 3
 };
 
-// Speed-Proportional Point Allocation Table
 function calculatePoints(isCorrect, timeTakenMs) {
   if (!isCorrect) return 0;
   if (timeTakenMs < 1000) return 15;      // < 1 sec
   if (timeTakenMs < 2000) return 13;      // 1-2 sec
   if (timeTakenMs < 3000) return 11;      // 2-3 sec
-  return 10;                              // > 3 sec (standard correct score)
+  return 10;                              // > 3 sec
 }
 
-// REST API endpoints
+// REST APIs
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, school, teamName, phone } = req.body;
@@ -44,7 +47,7 @@ app.post('/api/register', async (req, res) => {
 
     const config = await prisma.quizState.findUnique({ where: { id: 'ACTIVE_QUIZ' } });
     if (config && config.registrationLocked) {
-      return res.status(403).json({ error: 'Registration is closed for this active session.' });
+      return res.status(403).json({ error: 'Lobby registration is currently closed.' });
     }
 
     let playerId = '';
@@ -66,7 +69,6 @@ app.post('/api/register', async (req, res) => {
     const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET);
     return res.status(201).json({ token, user });
   } catch (err) {
-    console.error(err);
     return res.status(500).json({ error: 'Internal system error' });
   }
 });
@@ -81,6 +83,7 @@ app.get('/api/quiz-config', async (req, res) => {
           title: 'Neutron Rush Championship', 
           status: 'DRAFT', 
           timerSeconds: 15,
+          countdownSeconds: 3,
           showSchool: true,
           showTeamName: true
         }
@@ -88,21 +91,39 @@ app.get('/api/quiz-config', async (req, res) => {
     }
     return res.status(200).json(config);
   } catch (err) {
-    return res.status(500).json({ error: 'Failed to retrieve quiz configurations' });
+    return res.status(500).json({ error: 'Failed to retrieve quiz configuration' });
   }
 });
 
 app.post('/api/admin/quiz-config', async (req, res) => {
   try {
-    const { title, timerSeconds, showSchool, showTeamName } = req.body;
+    const { title, timerSeconds, countdownSeconds, showSchool, showTeamName } = req.body;
     const config = await prisma.quizState.upsert({
       where: { id: 'ACTIVE_QUIZ' },
-      update: { title, timerSeconds: parseInt(timerSeconds), showSchool, showTeamName },
-      create: { id: 'ACTIVE_QUIZ', title, timerSeconds: parseInt(timerSeconds), showSchool, showTeamName }
+      update: { 
+        title, 
+        timerSeconds: parseInt(timerSeconds), 
+        countdownSeconds: parseInt(countdownSeconds), 
+        showSchool, 
+        showTeamName 
+      },
+      create: { 
+        id: 'ACTIVE_QUIZ', 
+        title, 
+        timerSeconds: parseInt(timerSeconds), 
+        countdownSeconds: parseInt(countdownSeconds), 
+        showSchool, 
+        showTeamName 
+      }
     });
+
+    // Update in-memory parameters
+    activeMatch.timeLimitMs = config.timerSeconds * 1000;
+    activeMatch.countdownSeconds = config.countdownSeconds;
+
     return res.status(200).json(config);
   } catch (err) {
-    return res.status(500).json({ error: 'Failed to update settings' });
+    return res.status(500).json({ error: 'Failed to update configurations' });
   }
 });
 
@@ -110,13 +131,22 @@ app.post('/api/admin/questions-import', async (req, res) => {
   try {
     const { questions } = req.body;
     await prisma.question.createMany({ data: questions });
-    return res.status(201).json({ message: 'Import completed successfully' });
+    return res.status(201).json({ message: 'Questions imported' });
   } catch (err) {
-    return res.status(500).json({ error: 'Failed importing data' });
+    return res.status(500).json({ error: 'Failed importing questions' });
   }
 });
 
-// Socket.io Middlewares & Handlers
+app.get('/api/admin/questions-list', async (req, res) => {
+  try {
+    const questions = await prisma.question.findMany();
+    return res.status(200).json(questions);
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to get questions list' });
+  }
+});
+
+// Socket.io Real-Time Handler
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
   if (!token) return next(new Error('Missing token'));
@@ -129,14 +159,14 @@ io.use((socket, next) => {
 });
 
 io.on('connection', async (socket) => {
-  // Determine Profile Details and Add to Match Tracking
   const user = await prisma.user.findUnique({ where: { id: socket.userId } });
   if (user && user.role !== 'ADMIN') {
     activeMatch.connectedPlayers.set(socket.userId, {
       socketId: socket.id,
       name: user.name,
       playerId: user.playerId,
-      online: true
+      online: true,
+      status: 'Answering'
     });
   }
 
@@ -145,7 +175,6 @@ io.on('connection', async (socket) => {
     socket.join('admin-control');
   }
 
-  // Push immediate state synchronization on connection
   socket.emit('match:sync-state', {
     status: activeMatch.status,
     currentQuestion: activeMatch.currentQuestion ? {
@@ -157,21 +186,21 @@ io.on('connection', async (socket) => {
       optionD: activeMatch.currentQuestion.optionD,
       category: activeMatch.currentQuestion.category
     } : null,
+    timerSeconds: activeMatch.timeLimitMs / 1000,
+    countdownSeconds: activeMatch.countdownSeconds,
+    paused: activeMatch.paused,
     totalRegistered: activeMatch.connectedPlayers.size,
     players: Array.from(activeMatch.connectedPlayers.values())
   });
 
   io.to('admin-control').emit('admin:player-update', Array.from(activeMatch.connectedPlayers.values()));
 
-  // Admin: Toggle Registration Lock
   socket.on('admin:lock-registration', async (isLocked) => {
     if (socket.role !== 'ADMIN') return;
     await prisma.quizState.update({ where: { id: 'ACTIVE_QUIZ' }, data: { registrationLocked: isLocked } });
     io.to('quiz-arena').emit('registration:status-changed', isLocked);
-    addLog(`Registration lock state adjusted to: ${isLocked}`);
   });
 
-  // Admin: Remove/Kick Player
   socket.on('admin:kick-player', ({ userId }) => {
     if (socket.role !== 'ADMIN') return;
     const player = activeMatch.connectedPlayers.get(userId);
@@ -182,50 +211,56 @@ io.on('connection', async (socket) => {
     }
   });
 
-  // Admin: WAITING_ROOM state initiator
-  socket.on('admin:open-lobby', async () => {
+  socket.on('admin:open-lobby', () => {
     if (socket.role !== 'ADMIN') return;
     activeMatch.status = 'WAITING_ROOM';
     io.to('quiz-arena').emit('match:sync-state', { status: 'WAITING_ROOM', players: Array.from(activeMatch.connectedPlayers.values()) });
   });
 
-  // Admin: Initiate Countdown Sequence
   socket.on('admin:start-quiz', async () => {
     if (socket.role !== 'ADMIN') return;
-    
-    // Automatically close registration on launch
     await prisma.quizState.update({ where: { id: 'ACTIVE_QUIZ' }, data: { registrationLocked: true } });
-    
     activeMatch.status = 'COUNTDOWN';
-    io.to('quiz-arena').emit('match:sync-state', { status: 'COUNTDOWN' });
+    io.to('quiz-arena').emit('match:sync-state', { status: 'COUNTDOWN', countdownSeconds: activeMatch.countdownSeconds });
   });
 
-  // Admin: Pull next random question
-  socket.on('admin:next-question', async () => {
+  // Admin Manual / Random Question Launcher
+  socket.on('admin:next-question', async (manualQuestionId) => {
     if (socket.role !== 'ADMIN') return;
 
     try {
-      const unusedQuestions = await prisma.question.findMany({
-        where: { id: { notIn: activeMatch.usedQuestionIds } }
-      });
-
-      if (unusedQuestions.length === 0) {
-        activeMatch.status = 'ENDED';
-        io.to('quiz-arena').emit('match:sync-state', { status: 'ENDED' });
-        return;
+      let question = null;
+      if (manualQuestionId) {
+        question = await prisma.question.findUnique({ where: { id: manualQuestionId } });
+      } else {
+        const unused = await prisma.question.findMany({ where: { id: { notIn: activeMatch.usedQuestionIds } } });
+        if (unused.length === 0) {
+          activeMatch.status = 'ENDED';
+          io.to('quiz-arena').emit('match:sync-state', { status: 'ENDED' });
+          return;
+        }
+        question = unused[Math.floor(Math.random() * unused.length)];
       }
 
-      const randomIndex = Math.floor(Math.random() * unusedQuestions.length);
-      const question = unusedQuestions[randomIndex];
+      if (!question) return;
 
       activeMatch.currentQuestion = question;
-      activeMatch.usedQuestionIds.push(question.id);
+      if (!activeMatch.usedQuestionIds.includes(question.id)) {
+        activeMatch.usedQuestionIds.push(question.id);
+      }
       activeMatch.status = 'QUESTION';
+      activeMatch.paused = false;
       activeMatch.answersReceived.clear();
       activeMatch.questionStartMarker = Date.now();
 
+      // Reset players state back to "Answering"
+      activeMatch.connectedPlayers.forEach((p) => {
+        p.status = 'Answering';
+      });
+
       io.to('quiz-arena').emit('match:sync-state', {
         status: 'QUESTION',
+        timerSeconds: activeMatch.timeLimitMs / 1000,
         currentQuestion: {
           id: question.id,
           question: question.question,
@@ -236,41 +271,65 @@ io.on('connection', async (socket) => {
           category: question.category
         }
       });
+      io.to('admin-control').emit('admin:player-update', Array.from(activeMatch.connectedPlayers.values()));
     } catch (err) {
       console.error(err);
     }
   });
 
-  // Player: Answer Submission
+  // Pause / Resume Logic
+  socket.on('admin:pause-quiz', () => {
+    if (socket.role !== 'ADMIN' || activeMatch.status !== 'QUESTION' || activeMatch.paused) return;
+    activeMatch.paused = true;
+    activeMatch.pauseTimeMarker = Date.now() - activeMatch.questionStartMarker;
+    io.to('quiz-arena').emit('match:paused');
+  });
+
+  socket.on('admin:resume-quiz', () => {
+    if (socket.role !== 'ADMIN' || activeMatch.status !== 'QUESTION' || !activeMatch.paused) return;
+    activeMatch.paused = false;
+    activeMatch.questionStartMarker = Date.now() - activeMatch.pauseTimeMarker;
+    const remainingSeconds = Math.max(0, (activeMatch.timeLimitMs - activeMatch.pauseTimeMarker) / 1000);
+    io.to('quiz-arena').emit('match:resumed', { remainingSeconds });
+  });
+
+  // Emergency Stop / Freeze Frame
+  socket.on('admin:stop-match', () => {
+    if (socket.role !== 'ADMIN') return;
+    activeMatch.status = 'EMERGENCY_STOP';
+    io.to('quiz-arena').emit('match:sync-state', { status: 'EMERGENCY_STOP' });
+  });
+
+  // Answer Submission
   socket.on('quiz:submit-answer', async ({ questionId, selectedAnswer }) => {
-    if (activeMatch.status !== 'QUESTION' || !activeMatch.currentQuestion) return;
+    if (activeMatch.status !== 'QUESTION' || !activeMatch.currentQuestion || activeMatch.paused) return;
     if (activeMatch.currentQuestion.id !== questionId) return;
-    if (activeMatch.answersReceived.has(socket.userId)) return; // No duplicate submissions
+    if (activeMatch.answersReceived.has(socket.userId)) return;
 
     const timeTakenMs = Date.now() - activeMatch.questionStartMarker;
     const isCorrect = activeMatch.currentQuestion.correct === selectedAnswer;
 
-    activeMatch.answersReceived.set(socket.userId, {
-      selectedAnswer,
-      timeTakenMs,
-      isCorrect
-    });
+    activeMatch.answersReceived.set(socket.userId, { selectedAnswer, timeTakenMs, isCorrect });
 
-    // Compute live option distribution metrics for Admin
+    // Update Player connection state to "Submitted"
+    const p = activeMatch.connectedPlayers.get(socket.userId);
+    if (p) {
+      p.status = 'Submitted';
+      io.to('admin-control').emit('admin:player-update', Array.from(activeMatch.connectedPlayers.values()));
+    }
+
+    // Process real-time stats distribution
     const distribution = { A: 0, B: 0, C: 0, D: 0, total: activeMatch.answersReceived.size };
     const fastestList = [];
 
     activeMatch.answersReceived.forEach((ans, uid) => {
-      if (ans.selectedAnswer) {
-        distribution[ans.selectedAnswer]++;
-      }
-      const p = activeMatch.connectedPlayers.get(uid);
-      if (p && ans.isCorrect) {
-        fastestList.push({ name: p.name, time: (ans.timeTakenMs / 1000).toFixed(2) });
+      if (ans.selectedAnswer) distribution[ans.selectedAnswer]++;
+      const pl = activeMatch.connectedPlayers.get(uid);
+      if (pl && ans.isCorrect) {
+        fastestList.push({ name: pl.name, time: (ans.timeTakenMs / 1000).toFixed(2) });
       }
     });
 
-    // Sort fastest correct answers
     fastestList.sort((a, b) => a.time - b.time);
 
     io.to('admin-control').emit('admin:live-stats', {
@@ -279,17 +338,16 @@ io.on('connection', async (socket) => {
     });
   });
 
-  // Admin: Terminate current question timer & calculate scoring
+  // End Question early / Reveal Correct Option
   socket.on('admin:end-question', async () => {
     if (socket.role !== 'ADMIN' || activeMatch.status !== 'QUESTION') return;
     activeMatch.status = 'REVEAL_ANSWER';
 
     const currentQuestion = activeMatch.currentQuestion;
-
-    // Process database submissions transactionally for all registered players
     const players = Array.from(activeMatch.connectedPlayers.keys());
+
     for (const userId of players) {
-      const submission = activeMatch.answersReceived.get(userId) || { selectedAnswer: null, timeTakenMs: 15000, isCorrect: false };
+      const submission = activeMatch.answersReceived.get(userId) || { selectedAnswer: null, timeTakenMs: activeMatch.timeLimitMs, isCorrect: false };
       const points = calculatePoints(submission.isCorrect, submission.timeTakenMs);
 
       await prisma.response.upsert({
@@ -299,16 +357,12 @@ io.on('connection', async (socket) => {
       });
     }
 
-    // Refresh, Rank, and calculate relative positioning shift index
     const leaderboards = await prisma.leaderboard.findMany({ orderBy: [{ score: 'desc' }, { totalTimeMs: 'asc' }] });
-    
-    // Store old ranks
     const oldRanks = new Map();
     leaderboards.forEach((entry, idx) => {
       oldRanks.set(entry.userId, entry.currentRank || idx + 1);
     });
 
-    // Update with newly integrated points
     for (const userId of players) {
       const allResponses = await prisma.response.findMany({ where: { userId } });
       const correctAnswers = allResponses.filter(r => r.isCorrect);
@@ -324,7 +378,6 @@ io.on('connection', async (socket) => {
       });
     }
 
-    // Re-index sorted positions to calculate rank offsets (Movement indicator)
     const freshLeaderboards = await prisma.leaderboard.findMany({
       include: { user: { select: { name: true, playerId: true } } },
       orderBy: [{ score: 'desc' }, { totalTimeMs: 'asc' }]
@@ -341,17 +394,14 @@ io.on('connection', async (socket) => {
       });
     }
 
-    // Broadcast Reveal event
     io.to('quiz-arena').emit('quiz:reveal-answer', {
       correctAnswer: currentQuestion.correct,
-      explanation: currentQuestion.explanation,
       answers: Array.from(activeMatch.answersReceived.entries()).reduce((acc, [uid, val]) => {
         acc[uid] = val;
         return acc;
       }, {})
     });
 
-    // Broadcast updated ranking shifts
     const broadcastList = freshLeaderboards.map(entry => ({
       userId: entry.userId,
       name: entry.user.name,
@@ -359,18 +409,16 @@ io.on('connection', async (socket) => {
       score: entry.score,
       accuracy: entry.accuracy,
       totalTimeMs: entry.totalTimeMs,
-      movement: (entry.previousRank - entry.currentRank) // positive means up
+      movement: (entry.previousRank - entry.currentRank)
     }));
 
     io.to('quiz-arena').emit('leaderboard:update', broadcastList);
   });
 
-  // Admin: Complete Quiz and compile final metrics
   socket.on('admin:end-quiz', async () => {
     if (socket.role !== 'ADMIN') return;
     activeMatch.status = 'ENDED';
 
-    // Compile analytics metrics
     const responses = await prisma.response.findMany({ include: { user: { select: { name: true } } } });
     const correctResponses = responses.filter(r => r.isCorrect);
 
@@ -396,14 +444,11 @@ io.on('connection', async (socket) => {
     const player = activeMatch.connectedPlayers.get(socket.userId);
     if (player) {
       player.online = false;
+      player.status = 'Disconnected';
       io.to('admin-control').emit('admin:player-update', Array.from(activeMatch.connectedPlayers.values()));
     }
   });
 });
-
-function addLog(msg) {
-  console.log(`[LOG] ${msg}`);
-}
 
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {

@@ -12,7 +12,7 @@ interface RankRow {
   score: number;
   accuracy: number;
   totalTimeMs: number;
-  movement: number; // Positive values mean up, negative values mean down
+  movement: number;
 }
 
 export default function LiveLeaderboard() {

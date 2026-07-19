@@ -15,7 +15,7 @@ model User {
   teamName        String?
   phone           String?
   playerId        String       @unique
-  role            String       @default("PLAYER") // "PLAYER" | "ADMIN"
+  role            String       @default("PLAYER")
   createdAt       DateTime     @default(now())
   
   responses       Response[]
@@ -35,8 +35,8 @@ model Question {
   marks         Int        @default(10)
   negativeMarks Int        @default(0)
   category      String     @default("General")
-  difficulty    String     @default("Medium") // "Easy" | "Medium" | "Hard"
-  used          Boolean    @default(false)    // Tracks if used in the current run
+  difficulty    String     @default("Medium") // "Easy" | "Medium" | "Hard" | "Expert"
+  used          Boolean    @default(false)
   
   responses     Response[]
 }
@@ -44,8 +44,9 @@ model Question {
 model QuizState {
   id                String     @id @default("ACTIVE_QUIZ")
   title             String     @default("Neutron Rush Championship")
-  status            String     @default("DRAFT")  // "DRAFT" | "WAITING_ROOM" | "COUNTDOWN" | "QUESTION" | "REVEAL_ANSWER" | "ENDED"
+  status            String     @default("DRAFT")
   timerSeconds      Int        @default(15)
+  countdownSeconds  Int        @default(3)
   showSchool        Boolean    @default(true)
   showTeamName      Boolean    @default(true)
   currentQuestionId String?
@@ -76,7 +77,7 @@ model Leaderboard {
   score          Int      @default(0)
   accuracy       Float    @default(0.0)
   totalTimeMs    Int      @default(0)
-  previousRank   Int      @default(0)  // Used to calculate visual up/down indicators
+  previousRank   Int      @default(0)
   currentRank    Int      @default(0)
   updatedAt      DateTime @updatedAt
 
